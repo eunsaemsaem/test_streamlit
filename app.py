@@ -3,6 +3,7 @@ app.py — 2026 FIFA 월드컵 예측 모델 리더보드
 """
 
 import base64
+import io
 import os
 
 import pandas as pd
@@ -85,14 +86,22 @@ def load_results(api_key: str) -> list[dict]:
 
 
 @st.cache_data(ttl=60)   # 1분 캐시 — git push 후 빠르게 반영
-def load_predictions() -> pd.DataFrame:
-    """predictions/ 폴더의 모든 모델 CSV를 합쳐서 반환."""
+def load_predictions(token: str, repo: str, branch: str) -> pd.DataFrame:
+    """GitHub {branch}의 predictions/ CSV를 모두 읽어 반환."""
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+    }
     dfs = []
     for model, path in MODEL_FILES.items():
-        if os.path.exists(path):
-            df = pd.read_csv(path)
-            df["model"] = model
-            dfs.append(df)
+        api_url = f"https://api.github.com/repos/{repo}/contents/{path}"
+        resp = requests.get(api_url, headers=headers, params={"ref": branch}, timeout=10)
+        if resp.status_code != 200:
+            continue
+        raw = base64.b64decode(resp.json()["content"])
+        df = pd.read_csv(io.BytesIO(raw))
+        df["model"] = model
+        dfs.append(df)
 
     if not dfs:
         return pd.DataFrame(columns=["match_id", "pred_home", "pred_away", "model"])
@@ -147,9 +156,10 @@ with st.sidebar:
 st.title("⚽ 2026 FIFA 월드컵 예측 모델 리더보드")
 
 # 데이터 로드
-api_key  = get_api_key()
-results  = load_results(api_key)
-preds_df = load_predictions()
+api_key        = get_api_key()
+gh_token, gh_repo = get_github_config()
+results        = load_results(api_key)
+preds_df       = load_predictions(gh_token, gh_repo, target_branch.strip() or "main")
 
 # 데이터 소스 상태 표시
 src_col1, src_col2, src_col3 = st.columns([1.2, 1.2, 5])
